@@ -1,0 +1,47 @@
+name: Daily Automated AI Shorts Bot
+
+on:
+  schedule:
+    # Roz subah 9:00 AM IST (3:30 UTC) aur shaam 6:00 PM IST (12:30 UTC) par apne aap chalega
+    - cron: '30 3,12 * * *'
+  workflow_dispatch: # Isse aap jab chahein 1-click me manually bhi test kar sakte hain
+
+jobs:
+  create-and-upload-short:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg & Hindi Fonts (Cloud Server)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra
+
+      - name: Install Free AI Libraries
+        run: |
+          pip install google-genai edge-tts google-api-python-client google-auth-oauthlib
+
+      - name: Run AI Video Generator & Uploader
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          VOICE_ID: "hi-IN-MadhurNeural"
+          YT_PRIVACY: "public"
+        run: |
+          python auto_video_bot.py
+
+      - name: Save Generated Video as Backup Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-short-video
+          path: output_build/final_short.mp4
