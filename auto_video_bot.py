@@ -2,9 +2,11 @@
 """
 100% Free Automated Faceless YouTube Shorts Generator & Uploader
 Powered by:
-1. Google Gemini API (Free Tier) - Script, Title, Description, Tags, Search Queries
+1. Google Gemini API (Free Tier) - Script, Title, Description, Tags, Visual Prompts
 2. Microsoft Edge TTS (edge-tts) - Free Natural Hindi/English Neural Voiceover + Subtitles (.srt)
-3. Pexels Free Stock Video API - HD 9:16 Vertical Background Clips
+3. Visual Engine (Dual Mode):
+   - Mode A (Zero API Key!): Free AI Image Generation (Pollinations AI) + FFmpeg Smooth Zoom/Pan Animation
+   - Mode B (Optional): Pexels Free Stock Video API (if PEXELS_API_KEY is provided)
 4. FFmpeg - Cloud Video Assembly, Audio Mixing & Burned-In Subtitles
 5. YouTube Data API v3 - Direct Automated Scheduled Uploading
 """
@@ -28,7 +30,6 @@ from googleapiclient.http import MediaFileUpload
 # ==========================================
 # CONFIGURATION (Easily Changeable)
 # ==========================================
-# Choose your channel niche & voice
 NICHE_TOPICS = [
     "Mysterious Unsolved Historical Facts in Hindi",
     "Mind-Blowing Space and Science Facts in Hindi",
@@ -42,7 +43,7 @@ NICHE_TOPICS = [
 # Hindi Female: "hi-IN-SwaraNeural"
 # English Male: "en-US-ChristopherNeural"
 VOICE_ID = os.environ.get("VOICE_ID", "hi-IN-MadhurNeural")
-VOICE_RATE = "+10%"  # Slightly energetic pacing for high retention on Shorts
+VOICE_RATE = "+10%"
 
 WORK_DIR = Path("output_build")
 WORK_DIR.mkdir(exist_ok=True)
@@ -61,7 +62,8 @@ def generate_script_with_gemini(gemini_api_key: str) -> dict:
     - Start with a shocking 3-second hook question or statement.
     - Tell a specific, factual, verifiable story or explain a real phenomenon (NO generic repetitive fluff).
     - Write the spoken narration (`voiceover_text`) in natural conversational Hinglish/Hindi (written in Devanagari or clear Hindi words so Hindi TTS pronounces it naturally).
-    - Provide 4 specific English search keywords (`pexels_queries`) for 9:16 vertical stock videos that match the visual mood of each part of the script.
+    - Provide 4 specific English search keywords (`pexels_queries`) for 9:16 vertical stock videos.
+    - Also provide 4 detailed English AI image prompts (`ai_image_prompts`) describing dramatic, cinematic 9:16 scenes matching each part of the story (in case Pexels API key is not used).
     
     Return strictly valid JSON with these exact keys:
     {{
@@ -69,7 +71,13 @@ def generate_script_with_gemini(gemini_api_key: str) -> dict:
       "description": "Engaging description with #shorts #facts #hindi",
       "tags": ["shorts", "facts", "hindi", "mystery", "knowledge"],
       "voiceover_text": "Full spoken script in Hindi without any stage directions or brackets...",
-      "pexels_queries": ["cinematic dark universe", "ancient temple mystery", "clock ticking fast", "glowing brain neural network"]
+      "pexels_queries": ["cinematic dark universe", "ancient temple mystery", "clock ticking fast", "glowing brain neural network"],
+      "ai_image_prompts": [
+        "Cinematic dark deep space galaxy with glowing nebula, 8k vertical 9:16 masterpiece, no text",
+        "Ancient mysterious stone temple hidden in misty jungle at night, dramatic lighting, 8k vertical",
+        "Surreal golden antique pocket watch floating in time vortex, cinematic lighting, 8k vertical",
+        "Glowing futuristic human brain neural network connections, cyberpunk dramatic style, 8k vertical"
+      ]
     }}
     """
 
@@ -104,12 +112,52 @@ async def generate_voice_and_subtitles(text: str, audio_path: Path, srt_path: Pa
     print(f"[+] Audio & Subtitles saved to {audio_path} and {srt_path}")
 
 
-def download_pexels_videos(pexels_api_key: str, queries: list, count_Needed: int = 4) -> list:
+def generate_free_ai_visuals_no_key(prompts: list, total_duration: float) -> list:
+    """
+    100% Free Keyless Fallback!
+    Uses Pollinations AI (no signup or API key needed) to generate 4 custom 9:16 vertical AI images
+    and animates each into a smooth video clip using FFmpeg.
+    """
+    print("[*] No PEXELS_API_KEY needed! Generating custom AI scenes using Pollinations Free AI...")
+    clips = []
+    segment_duration = total_duration / len(prompts)
+
+    for idx, prompt in enumerate(prompts):
+        seed = random.randint(1000, 999999)
+        encoded = urllib.parse.quote(f"{prompt}, vertical 9:16, ultra detailed, cinematic lighting, no text")
+        img_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&seed={seed}&nologo=true"
+        img_path = WORK_DIR / f"scene_{idx}.jpg"
+        clip_path = WORK_DIR / f"ai_clip_{idx}.mp4"
+
+        req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp, open(img_path, "wb") as out_f:
+            out_f.write(resp.read())
+        print(f"[+] Downloaded Free AI Scene {idx + 1}/4 -> {img_path}")
+
+        # Turn the static AI image into a smooth zoom-in 30fps vertical video clip
+        frames = int(segment_duration * 30) + 15
+        cmd = [
+            "ffmpeg", "-y", "-loop", "1", "-i", str(img_path),
+            "-vf", (
+                f"scale=1200:2134,zoompan=z='min(zoom+0.0012,1.15)':"
+                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps=30,format=yuv420p"
+            ),
+            "-t", f"{segment_duration:.2f}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            str(clip_path)
+        ]
+        subprocess.run(cmd, check=True)
+        clips.append(clip_path)
+
+    return clips
+
+
+def download_pexels_videos(pexels_api_key: str, queries: list, count_needed: int = 4) -> list:
     """Downloads free HD vertical (9:16) stock videos from Pexels API."""
     downloaded_files = []
-    headers = {"Authorization": pexels_api_key}
+    headers = {"Authorization": pexels_api_key, "User-Agent": "Mozilla/5.0"}
 
-    for idx, query in enumerate(queries[:count_Needed]):
+    for idx, query in enumerate(queries[:count_needed]):
         encoded_query = urllib.parse.quote(query)
         url = f"https://api.pexels.com/videos/search?query={encoded_query}&orientation=portrait&size=medium&per_page=5"
         req = urllib.request.Request(url, headers=headers)
@@ -123,7 +171,6 @@ def download_pexels_videos(pexels_api_key: str, queries: list, count_Needed: int
 
                 video_choice = random.choice(videos)
                 video_files = video_choice.get("video_files", [])
-                # Prefer HD vertical mp4
                 best_file = sorted(
                     [vf for vf in video_files if vf.get("file_type") == "video/mp4" and vf.get("height", 0) >= 1280],
                     key=lambda x: x.get("height", 0),
@@ -137,8 +184,6 @@ def download_pexels_videos(pexels_api_key: str, queries: list, count_Needed: int
         except Exception as e:
             print(f"[!] Warning: Could not fetch Pexels clip for '{query}': {e}")
 
-    if not downloaded_files:
-        raise RuntimeError("No Pexels videos could be downloaded. Check your PEXELS_API_KEY.")
     return downloaded_files
 
 
@@ -225,12 +270,12 @@ def upload_to_youtube(video_path: Path, metadata: dict):
             "title": metadata["title"][:100],
             "description": metadata["description"],
             "tags": metadata.get("tags", ["shorts", "facts"]),
-            "categoryId": "27"  # Education / Knowledge
+            "categoryId": "27"
         },
         "status": {
             "privacyStatus": os.environ.get("YT_PRIVACY", "public"),
             "selfDeclaredMadeForKids": False,
-            "containsSyntheticMedia": True  # Complies with YouTube 2026 AI Disclosure Rules
+            "containsSyntheticMedia": True
         }
     }
 
@@ -242,10 +287,10 @@ def upload_to_youtube(video_path: Path, metadata: dict):
 
 async def main():
     gemini_key = os.environ.get("GEMINI_API_KEY")
-    pexels_key = os.environ.get("PEXELS_API_KEY")
+    pexels_key = os.environ.get("PEXELS_API_KEY", "").strip()
 
-    if not gemini_key or not pexels_key:
-        raise ValueError("Missing GEMINI_API_KEY or PEXELS_API_KEY in environment variables!")
+    if not gemini_key:
+        raise ValueError("Missing GEMINI_API_KEY in environment variables!")
 
     # Step 1: Brain - Generate script & metadata with Gemini
     metadata = generate_script_with_gemini(gemini_key)
@@ -254,9 +299,15 @@ async def main():
     audio_path = WORK_DIR / "voiceover.mp3"
     srt_path = WORK_DIR / "subtitles.srt"
     await generate_voice_and_subtitles(metadata["voiceover_text"], audio_path, srt_path)
+    total_duration = get_audio_duration(audio_path)
 
-    # Step 3: Visuals - Fetch vertical HD stock footage from Pexels
-    clips = download_pexels_videos(pexels_key, metadata["pexels_queries"])
+    # Step 3: Visuals - Use Pexels if key is set, otherwise automatically use Free Keyless AI Visuals!
+    clips = []
+    if pexels_key:
+        clips = download_pexels_videos(pexels_key, metadata["pexels_queries"])
+    if not clips:
+        ai_prompts = metadata.get("ai_image_prompts", metadata["pexels_queries"])
+        clips = generate_free_ai_visuals_no_key(ai_prompts, total_duration)
 
     # Step 4: Render - Combine clips, audio, and subtitles via FFmpeg
     final_video = WORK_DIR / "final_short.mp4"
